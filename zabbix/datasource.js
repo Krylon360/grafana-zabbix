@@ -32,6 +32,7 @@ function (angular, _, kbn) {
       // get from & to in seconds
       var from = kbn.parseDate(options.range.from).getTime();
       var to = kbn.parseDate(options.range.to).getTime();
+
       // Need for find target alias
       var targets = options.targets;
 
@@ -43,7 +44,6 @@ function (angular, _, kbn) {
         // Extract zabbix api item objects from targets
         var target_items = _.map(options.targets, 'item');
       } else {
-
         // No valid targets, return the empty dataset
         var d = $q.defer();
         d.resolve({ data: [] });
@@ -66,6 +66,7 @@ function (angular, _, kbn) {
         performedQuery = this.performTimeSeriesQuery(target_items, from, to);
       }
 
+      // Handle response from Zabbix API and convert data to Grafana's format
       return performedQuery.then(function (response) {
         /**
          * Response should be in the format:
@@ -82,21 +83,11 @@ function (angular, _, kbn) {
          */
 
         // Index returned datapoints by item/metric id
-        var indexed_result = _.groupBy(response.data.result, function (history_item) {
-          return history_item.itemid;
-        });
-
-        // Reduce timeseries to the same size for stacking and tooltip work properly
-        var min_length = _.min(_.map(indexed_result, function (history) {
-          return history.length;
-        }));
-        _.each(indexed_result, function (item) {
-          item.splice(0, item.length - min_length);
-        });
+        var grouped_history = groupHistory(response.data.result);
 
         // Sort result as the same as targets for display
         // stacked timeseries in proper order
-        var sorted_history = _.sortBy(indexed_result, function (value, key, list) {
+        var sorted_history = _.sortBy(grouped_history, function (value, key, list) {
           return _.indexOf(_.map(target_items, 'itemid'), key);
         });
 
@@ -119,9 +110,57 @@ function (angular, _, kbn) {
                 return [value, p.clock * 1000];
               })
             };
-          })
+          });
+        if (series.length > 1) {
+          series = alignSeriesTime(series)
+        }
         return $q.when({data: series});
       });
+    };
+
+
+    // Group history by itemids
+    function groupHistory(history) {
+      // Index returned datapoints by item/metric id
+      var indexed_result = _.groupBy(history, function (history_item) {
+        return history_item.itemid;
+      });
+
+      // Reduce timeseries to the same size for stacking and tooltip work properly
+      if (_.size(indexed_result) > 1) {
+        var min_length = _.min(_.map(indexed_result, function (history) {
+          return history.length;
+        }));
+        _.each(indexed_result, function (item) {
+          item.splice(0, item.length - min_length);
+        });
+      }
+      return indexed_result;
+    }
+
+
+    // Align series time to equal values
+    function alignSeriesTime(series) {
+      var last_times = _.map(series, function (s) {
+        return _.last(s.datapoints)[1];
+      });
+      var max_time_index = _.indexOf(last_times, _.max(last_times));
+      var etalon_series = series[max_time_index].datapoints;
+      return _.each(series, function (s) {
+        s.datapoints = _.map(s.datapoints, function (datapoint, index) {
+          datapoint[1] = etalon_series[index][1];
+          return datapoint;
+        });
+      });
+    }
+
+    /**
+     * Handle response from Zabbix API and convert data to Grafana's format
+     *
+     * @param items: array of zabbix api item objects
+     */
+    ZabbixAPIDatasource.prototype.handleZabbixAPIResponse = function(response) {
+      // TODO: handle response
     };
 
 
